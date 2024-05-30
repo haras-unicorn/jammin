@@ -1,0 +1,13 @@
+# Rust
+
+debug/
+target/
+**/*.rs.bk
+*.pdb
+
+
+# User
+
+.direnv
+result
+audio

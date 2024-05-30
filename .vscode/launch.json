@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "debug",
+      "cargo": {
+        "args": ["build"]
+      },
+      "cwd": "${workspaceFolder}",
+      "postRunCommands": [
+        "process handle SIGPIPE -n true -p true -s false",
+        "process handle SIGSTOP -n true -p true -s false"
+      ]
+    }
+  ]
+}

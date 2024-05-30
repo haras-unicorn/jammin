@@ -1,0 +1,56 @@
+[language-server]
+nil = { command = "nil" }
+taplo = { command = "taplo", args = ["lsp", "stdio"] }
+yaml-language-server = { command = "yaml-language-server", args = ["--stdio"] }
+marksman = { command = "marksman", args = ["server"] }
+
+[language-server.rust-analyzer]
+command = "rust-analyzer"
+
+[language-server.rust-analyzer.config]
+inlayHints.bindingModeHints.enable = false
+inlayHints.closingBraceHints.minLines = 10
+inlayHints.closureReturnTypeHints.enable = "with_block"
+inlayHints.discriminantHints.enable = "fieldless"
+inlayHints.lifetimeElisionHints.enable = "skip_trivial"
+inlayHints.typeHints.hideClosureInitialization = false
+
+[[language]]
+name = "nix"
+auto-format = true
+formatter = { command = "nixpkgs-fmt" }
+language-servers = ["nil"]
+
+[[language]]
+name = "rust"
+auto-format = true
+language-servers = ["rust-analyzer"]
+
+[[language]]
+name = "toml"
+auto-format = true
+language-servers = ["taplo"]
+
+[[language]]
+name = "yaml"
+auto-format = true
+formatter = { command = "prettier", args = [
+  "--parser",
+  "yaml",
+] }
+language-servers = ["yaml-language-server"]
+
+[[language]]
+name = "json"
+auto-format = true
+formatter = { command = "prettier", args = ["--parser", "json"] }
+language-servers = ["vscode-json-language-server"]
+
+[[language]]
+name = "markdown"
+auto-format = true
+formatter = { command = "prettier", args = [
+  "--parser",
+  "markdown",
+] }
+language-servers = ["marksman"]
