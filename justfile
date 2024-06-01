@@ -20,5 +20,5 @@ test:
 docs:
   cd '{{root}}'; cargo doc --no-deps
 
-run:
-  cd '{{root}}'; cargo run
+run *args:
+  cd '{{root}}'; cargo run -- {{args}}

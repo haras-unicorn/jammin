@@ -93,6 +93,7 @@
             rustfmt
             rust-analyzer
             cargo-edit
+            evcxr
 
             # Libraries
             pkg-config
