@@ -4,7 +4,7 @@ use web_audio_api::{
   media_recorder::BlobEvent, AudioBuffer, AudioBufferOptions,
 };
 
-// TODO: tracing::debug, tracing::trace
+// FIXME: stateful because the header contains information about channels
 
 pub(super) struct Payload {
   pub(super) buffer: AudioBuffer,
