@@ -1,7 +1,6 @@
-use std::io::BufReader;
+use std::io::{BufReader, Cursor};
 
-use hound::WavReader;
-use iter_read::IterRead;
+use hound::{read_wave_header, WavReader};
 use web_audio_api::{
   media_recorder::BlobEvent, AudioBuffer, AudioBufferOptions,
 };
@@ -28,12 +27,18 @@ impl PayloadFactory {
     event: BlobEvent,
   ) -> anyhow::Result<Payload> {
     let buffer = {
-      if &event.blob[0..4] == b"RIFF" {
-        self.header =
-          Some(event.blob.iter().cloned().take(44).collect::<Vec<_>>());
-        let reader = WavReader::new(BufReader::new(IterRead::new(
-          event.blob.iter().cloned(),
-        )))?;
+      if read_wave_header(&mut BufReader::new(event.blob.as_slice())).is_ok() {
+        let vec = &event.blob;
+        let reader = WavReader::new(Cursor::new(vec.as_slice()))?;
+        self.header = Some(
+          event
+            .blob
+            .iter()
+            .cloned()
+            .take(reader.into_inner().position() as usize)
+            .collect::<Vec<_>>(),
+        );
+        let reader = WavReader::new(BufReader::new(vec.as_slice()))?;
         let channels = reader.spec().channels as usize;
         let mut buffer = AudioBuffer::new(AudioBufferOptions {
           number_of_channels: channels,
@@ -41,9 +46,7 @@ impl PayloadFactory {
           sample_rate: reader.spec().sample_rate as f32,
         });
         for channel in 0..channels {
-          let reader = WavReader::new(BufReader::new(IterRead::new(
-            event.blob.iter().cloned(),
-          )))?;
+          let reader = WavReader::new(BufReader::new(vec.as_slice()))?;
           buffer.copy_to_channel(
             reader
               .into_samples()
@@ -57,9 +60,12 @@ impl PayloadFactory {
         }
         Ok(buffer)
       } else if let Some(header) = &self.header {
-        let reader = WavReader::new(BufReader::new(IterRead::new(
-          header.iter().cloned().chain(event.blob.iter().cloned()),
-        )))?;
+        let vec = header
+          .iter()
+          .cloned()
+          .chain(event.blob.iter().cloned())
+          .collect::<Vec<_>>();
+        let reader = WavReader::new(BufReader::new(vec.as_slice()))?;
         let channels = reader.spec().channels as usize;
         let mut buffer = AudioBuffer::new(AudioBufferOptions {
           number_of_channels: reader.spec().channels as usize,
@@ -67,9 +73,7 @@ impl PayloadFactory {
           sample_rate: reader.spec().sample_rate as f32,
         });
         for channel in 0..channels {
-          let reader = WavReader::new(BufReader::new(IterRead::new(
-            event.blob.iter().cloned(),
-          )))?;
+          let reader = WavReader::new(BufReader::new(vec.as_slice()))?;
           buffer.copy_to_channel(
             reader
               .into_samples()
