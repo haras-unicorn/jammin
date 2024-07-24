@@ -5,6 +5,8 @@ use web_audio_api::{
   media_recorder::BlobEvent, AudioBuffer, AudioBufferOptions,
 };
 
+// FIXME: WavReader::new returns "data chunk length is not a multiple of sample size"
+
 pub(super) struct Payload {
   pub(super) buffer: AudioBuffer,
   pub(super) start: chrono::DateTime<chrono::Utc>,
