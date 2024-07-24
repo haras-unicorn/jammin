@@ -14,9 +14,10 @@ use web_audio_api::{
   AudioBuffer, AudioBufferOptions,
 };
 
-use crate::looper::payload::Payload;
-
-use self::recorder::{LoopRecorder, LoopRecorderStateMessage, ToggleRecording};
+use self::{
+  payload::PayloadFactory,
+  recorder::{LoopRecorder, LoopRecorderStateMessage, ToggleRecording},
+};
 
 // TODO: tracing::debug, tracing::trace
 
@@ -72,9 +73,10 @@ impl Looper {
     recorder.set_onerror(move |event| {
       tracing::error!("Recorder error {:?}", event);
     });
+    let mut payload_factory = PayloadFactory::new();
     recorder.set_ondataavailable(move |event: BlobEvent| {
       tracing::trace!("Received buffer len {}", event.blob.len());
-      let payload = Payload::new(sample_rate, started, event);
+      let payload = payload_factory.load(sample_rate, started, event);
       match payload {
         Ok(payload) => {
           if let Err(error) = recorder_tx.try_send(payload) {

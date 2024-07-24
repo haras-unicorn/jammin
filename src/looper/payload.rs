@@ -1,10 +1,10 @@
-use std::io::{Cursor, Read};
+use std::io::BufReader;
 
+use hound::WavReader;
+use iter_read::IterRead;
 use web_audio_api::{
   media_recorder::BlobEvent, AudioBuffer, AudioBufferOptions,
 };
-
-// FIXME: stateful because the header contains information about channels
 
 pub(super) struct Payload {
   pub(super) buffer: AudioBuffer,
@@ -12,41 +12,80 @@ pub(super) struct Payload {
   pub(super) stop: chrono::DateTime<chrono::Utc>,
 }
 
-impl Payload {
-  pub(super) fn new(
+pub(super) struct PayloadFactory {
+  header: Option<Vec<u8>>,
+}
+
+impl PayloadFactory {
+  pub(super) fn new() -> Self {
+    Self { header: None }
+  }
+
+  pub(super) fn load(
+    &mut self,
     sample_rate: f32,
     started: chrono::DateTime<chrono::Utc>,
     event: BlobEvent,
-  ) -> anyhow::Result<Self> {
-    let mut buffer = AudioBuffer::new(AudioBufferOptions {
-      number_of_channels: 1,
-      length: event.blob.len() / 4,
-      sample_rate,
-    });
-
-    let mut cursor = Cursor::new(&event.blob);
-    let mut pcm_data = Vec::new();
-
-    let is_first_chunk = {
-      let mut header = [0u8; 4];
-      cursor.read_exact(&mut header)?;
-      &header == b"RIFF"
-    };
-
-    if is_first_chunk {
-      cursor.set_position(44 as u64);
-    }
-    cursor.read_to_end(&mut pcm_data)?;
-
-    let encoded = pcm_data
-      .chunks_exact(4)
-      .map(|chunk| {
-        #[allow(clippy::unwrap_used)] // NOTE: we set the chunk size statically
-        f32::from_le_bytes(chunk[0..4].try_into().unwrap())
-      })
-      .collect::<Vec<f32>>();
-
-    buffer.copy_to_channel(encoded.as_slice(), 0);
+  ) -> anyhow::Result<Payload> {
+    let buffer = {
+      if &event.blob[0..4] == b"RIFF" {
+        self.header =
+          Some(event.blob.iter().cloned().take(44).collect::<Vec<_>>());
+        let reader = WavReader::new(BufReader::new(IterRead::new(
+          event.blob.iter().cloned(),
+        )))?;
+        let channels = reader.spec().channels as usize;
+        let mut buffer = AudioBuffer::new(AudioBufferOptions {
+          number_of_channels: channels,
+          length: reader.duration() as usize,
+          sample_rate: reader.spec().sample_rate as f32,
+        });
+        for channel in 0..channels {
+          let reader = WavReader::new(BufReader::new(IterRead::new(
+            event.blob.iter().cloned(),
+          )))?;
+          buffer.copy_to_channel(
+            reader
+              .into_samples()
+              .skip(channel as usize)
+              .step_by(channels)
+              .flatten()
+              .collect::<Vec<_>>()
+              .as_slice(),
+            channel as usize,
+          );
+        }
+        Ok(buffer)
+      } else if let Some(header) = &self.header {
+        let reader = WavReader::new(BufReader::new(IterRead::new(
+          header.iter().cloned().chain(event.blob.iter().cloned()),
+        )))?;
+        let channels = reader.spec().channels as usize;
+        let mut buffer = AudioBuffer::new(AudioBufferOptions {
+          number_of_channels: reader.spec().channels as usize,
+          length: reader.duration() as usize,
+          sample_rate: reader.spec().sample_rate as f32,
+        });
+        for channel in 0..channels {
+          let reader = WavReader::new(BufReader::new(IterRead::new(
+            event.blob.iter().cloned(),
+          )))?;
+          buffer.copy_to_channel(
+            reader
+              .into_samples()
+              .skip(channel as usize)
+              .step_by(channels)
+              .flatten()
+              .collect::<Vec<_>>()
+              .as_slice(),
+            channel as usize,
+          );
+        }
+        Ok(buffer)
+      } else {
+        Err(anyhow::anyhow!("No header"))
+      }
+    }?;
 
     let start = started
       .checked_add_signed(chrono::TimeDelta::nanoseconds(
@@ -69,7 +108,7 @@ impl Payload {
       stop
     );
 
-    Ok(Self {
+    Ok(Payload {
       buffer,
       start,
       stop,
