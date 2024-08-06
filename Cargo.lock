@@ -1733,11 +1733,13 @@ dependencies = [
  "serde",
  "serde_json",
  "shellexpand",
+ "symphonia",
  "tokio",
  "tokio-scoped",
  "toml",
  "tracing",
  "tracing-subscriber",
+ "wavers",
  "web-audio-api",
 ]
 
@@ -3880,6 +3882,18 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "wavers"
+version = "1.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab501e9e5b13446d3a6e846de0c190c96b85ca3eced3bd00460edc67654500c8"
+dependencies = [
+ "bytemuck",
+ "num-traits",
+ "paste",
+ "thiserror",
 ]
 
 [[package]]

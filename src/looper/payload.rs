@@ -1,11 +1,21 @@
-use std::io::{BufReader, Cursor};
+use std::{
+  io::{BufReader, Cursor, Read, Seek},
+  sync::{Arc, Mutex},
+};
 
-use hound::{read_wave_header, WavReader};
+use symphonia::{
+  core::{
+    codecs::CODEC_TYPE_NULL,
+    io::{MediaSource, MediaSourceStream, ReadOnlySource},
+    probe::Hint,
+  },
+  default::get_probe,
+};
 use web_audio_api::{
   media_recorder::BlobEvent, AudioBuffer, AudioBufferOptions,
 };
 
-// FIXME: WavReader::new returns "data chunk length is not a multiple of sample size"
+// FIXME: the pony optimization thing
 
 pub(super) struct Payload {
   pub(super) buffer: AudioBuffer,
@@ -13,8 +23,53 @@ pub(super) struct Payload {
   pub(super) stop: chrono::DateTime<chrono::Utc>,
 }
 
+trait ReadSeek: Read + Seek + Send {}
+
+impl<T> ReadSeek for Cursor<T> where T: AsRef<[u8]> + Send {}
+
+#[derive(Clone)]
+struct Pony {
+  data: Arc<Mutex<Box<dyn ReadSeek>>>,
+}
+
+impl Pony {
+  fn new(data: impl ReadSeek) -> Self {
+    Self {
+      data: Arc::new(Mutex::new(Box::new(data))),
+    }
+  }
+}
+
+impl Read for Pony {
+  fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut lock = self.data.lock().map_err(|err| {
+      std::io::Error::new(std::io::ErrorKind::Other, anyhow::anyhow!("Poison"))
+    })?;
+    (*lock).read(buf)
+  }
+}
+
+impl Seek for Pony {
+  fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+    let mut lock = self.data.lock().map_err(|err| {
+      std::io::Error::new(std::io::ErrorKind::Other, anyhow::anyhow!("Poison"))
+    })?;
+    (*lock).seek(pos)
+  }
+}
+
+impl MediaSource for Pony {
+  fn is_seekable(&self) -> bool {
+    true
+  }
+
+  fn byte_len(&self) -> Option<u64> {
+    None
+  }
+}
+
 pub(super) struct PayloadFactory {
-  header: Option<Vec<u8>>,
+  header: Option<Pony>,
 }
 
 impl PayloadFactory {
@@ -28,70 +83,56 @@ impl PayloadFactory {
     started: chrono::DateTime<chrono::Utc>,
     event: BlobEvent,
   ) -> anyhow::Result<Payload> {
-    let buffer = {
-      if read_wave_header(&mut BufReader::new(event.blob.as_slice())).is_ok() {
-        let vec = &event.blob;
-        let reader = WavReader::new(Cursor::new(vec.as_slice()))?;
-        self.header = Some(
-          event
-            .blob
-            .iter()
-            .cloned()
-            .take(reader.into_inner().position() as usize)
-            .collect::<Vec<_>>(),
-        );
-        let reader = WavReader::new(BufReader::new(vec.as_slice()))?;
-        let channels = reader.spec().channels as usize;
-        let mut buffer = AudioBuffer::new(AudioBufferOptions {
-          number_of_channels: channels,
-          length: reader.duration() as usize,
-          sample_rate: reader.spec().sample_rate as f32,
-        });
-        for channel in 0..channels {
-          let reader = WavReader::new(BufReader::new(vec.as_slice()))?;
-          buffer.copy_to_channel(
-            reader
-              .into_samples()
-              .skip(channel as usize)
-              .step_by(channels)
-              .flatten()
-              .collect::<Vec<_>>()
-              .as_slice(),
-            channel as usize,
-          );
-        }
-        Ok(buffer)
-      } else if let Some(header) = &self.header {
-        let vec = header
-          .iter()
-          .cloned()
-          .chain(event.blob.iter().cloned())
-          .collect::<Vec<_>>();
-        let reader = WavReader::new(BufReader::new(vec.as_slice()))?;
-        let channels = reader.spec().channels as usize;
-        let mut buffer = AudioBuffer::new(AudioBufferOptions {
-          number_of_channels: reader.spec().channels as usize,
-          length: reader.duration() as usize,
-          sample_rate: reader.spec().sample_rate as f32,
-        });
-        for channel in 0..channels {
-          let reader = WavReader::new(BufReader::new(vec.as_slice()))?;
-          buffer.copy_to_channel(
-            reader
-              .into_samples()
-              .skip(channel as usize)
-              .step_by(channels)
-              .flatten()
-              .collect::<Vec<_>>()
-              .as_slice(),
-            channel as usize,
-          );
-        }
-        Ok(buffer)
-      } else {
-        Err(anyhow::anyhow!("No header"))
-      }
-    }?;
+    let source = MediaSourceStream::new(
+      Box::new(Cursor::new(event.blob.clone())),
+      Default::default(),
+    );
+    let mut hint = Hint::new();
+    hint.mime_type("audio/wav");
+    let probed = if let Ok(probed) = get_probe().format(
+      &hint,
+      source,
+      &Default::default(),
+      &Default::default(),
+    ) {
+      self.header = Some(Pony::new(Cursor::new(event.blob)));
+      probed
+    } else if let Some(header) = &self.header {
+      let pony =
+        Pony::new(BufReader::new(header.chain(Cursor::new(event.blob))));
+      self.header = Some(pony.clone());
+      get_probe().format(
+        &hint,
+        MediaSourceStream::new(
+          Box::new(ReadOnlySource::new(pony.clone())),
+          Default::default(),
+        ),
+        &Default::default(),
+        &Default::default(),
+      )?
+    } else {
+      return Err(anyhow::anyhow!("No header"));
+    };
+
+    let default_track = probed
+      .format
+      .tracks()
+      .iter()
+      .find(|track| track.codec_params.codec != CODEC_TYPE_NULL)
+      .ok_or_else(|| anyhow::anyhow!("No default track"))?;
+    let mut buffer = AudioBuffer::new(AudioBufferOptions {
+      number_of_channels: probed.format.tracks().len(),
+      length: default_track
+        .codec_params
+        .n_frames
+        .ok_or_else(|| anyhow::anyhow!("No frame count"))?
+        as usize,
+      sample_rate: default_track
+        .codec_params
+        .sample_rate
+        .ok_or_else(|| anyhow::anyhow!("No sample rate"))?
+        as f32,
+    });
 
     let start = started
       .checked_add_signed(chrono::TimeDelta::nanoseconds(
