@@ -73,10 +73,10 @@ impl Looper {
     recorder.set_onerror(move |event| {
       tracing::error!("Recorder error {:?}", event);
     });
-    let mut payload_factory = PayloadFactory::new();
+    let mut payload_factory = PayloadFactory::new(started);
     recorder.set_ondataavailable(move |event: BlobEvent| {
       tracing::trace!("Received buffer len {}", event.blob.len());
-      let payload = payload_factory.load(sample_rate, started, event);
+      let payload = payload_factory.load(event);
       match payload {
         Ok(payload) => {
           if let Err(error) = recorder_tx.try_send(payload) {
