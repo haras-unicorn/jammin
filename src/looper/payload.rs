@@ -15,7 +15,7 @@ use web_audio_api::{
   media_recorder::BlobEvent, AudioBuffer, AudioBufferOptions,
 };
 
-// FIXME: the pony optimization thing
+// FIXME: make a source stream for symphonia and send symphonia packets as audio buffers
 
 pub(super) struct Payload {
   pub(super) buffer: AudioBuffer,
